@@ -130,7 +130,7 @@
       <h1>GENUINE UNDEAD-MAN</h1>
       <p>Eat pellets. Grab cherries to power up and chomp the ghosts!</p>
       <p class="hint">6 unique undead ghosts · 3 lives · Timed power mode</p>
-      <button id="startBtn">START GAME</button>
+      <button id="startBtn" type="button">START GAME</button>
     </div>
   </div>
 
@@ -199,6 +199,10 @@
     if (!d) return DIRS.left;
     if (d.x === 0) return d.y > 0 ? DIRS.up : DIRS.down;
     return d.x > 0 ? DIRS.left : DIRS.right;
+  }
+
+  function isImageLoaded(img) {
+    return img && img.complete && img.naturalWidth && img.naturalWidth > 0;
   }
 
   let pac = {
@@ -290,7 +294,7 @@
 
   function canPassTile(c, r) {
     if (r < 0 || r >= ROWS) return false;
-    if (c < 0 || c >= COLS) return true;
+    if (c < 0 || c >= COLS) return true; // allow horizontal wrap
     return map[r][c] !== 0;
   }
 
@@ -501,8 +505,8 @@
     ctx.fillStyle = '#000010';
     ctx.fillRect(0, 0, w, h);
 
-    // Render background image at 20% opacity
-    if (images.bg) {
+    // Render background image at 20% opacity if loaded
+    if (isImageLoaded(images.bg)) {
       ctx.save();
       ctx.globalAlpha = 0.20;
       const bgAspect = images.bg.width / images.bg.height;
@@ -553,7 +557,7 @@
       const sy = g.y * tileSize;
       const size = tileSize * 0.95;
       const img = images[g.imgKey];
-      if (!img) continue;
+      if (!isImageLoaded(img)) continue;
 
       ctx.save();
       if (g.state === 'frightened') {
@@ -588,7 +592,7 @@
     ctx.fill();
     ctx.restore();
 
-    if (images.pacman) {
+    if (isImageLoaded(images.pacman)) {
       ctx.save();
       if (powered) {
         ctx.shadowColor = '#00ff66';
@@ -632,7 +636,7 @@
       <h1>GAME OVER</h1>
       <p>Final Score: <strong style="color:#ff0">${score}</strong></p>
       <p class="hint">The undead overtook you...</p>
-      <button id="restartBtn">PLAY AGAIN</button>
+      <button id="restartBtn" type="button">PLAY AGAIN</button>
     `;
     ov.style.display = 'flex';
     document.getElementById('restartBtn').addEventListener('click', () => {
@@ -678,8 +682,8 @@
 
   function resize() {
     const container = document.getElementById('game-container');
-    const maxW = container.clientWidth - 16;
-    const maxH = container.clientHeight - 50;
+    const maxW = Math.max(0, container.clientWidth - 16);
+    const maxH = Math.max(0, container.clientHeight - 50);
     const mapAspect = COLS / ROWS;
     let cw, ch;
     if (maxW / maxH > mapAspect) {
@@ -689,7 +693,10 @@
       cw = Math.min(maxW, 700);
       ch = cw / mapAspect;
     }
-    tileSize = Math.floor(cw / COLS);
+    // Ensure reasonable tile size to avoid zero-sized canvas
+    const computedTile = Math.max(8, Math.floor(cw / COLS));
+    tileSize = computedTile;
+    if (!canvas) return;
     canvas.width = tileSize * COLS;
     canvas.height = tileSize * ROWS;
     canvas.style.width = canvas.width + 'px';
@@ -711,24 +718,28 @@
       let count = 0;
       keys.forEach(key => {
         const img = new Image();
+        // allow cross-origin if images are hosted elsewhere
+        img.crossOrigin = 'anonymous';
         img.onload = () => {
           count++;
           if (count === keys.length) resolve();
         };
         img.onerror = () => {
+          // continue even if some images fail to load
           count++;
           if (count === keys.length) resolve();
         };
-        img.src = SPRITES[key];
         images[key] = img;
+        img.src = SPRITES[key];
       });
     });
   }
 
   async function init() {
     canvas = document.getElementById('game');
+    if (!canvas) return;
     ctx = canvas.getContext('2d');
-    ctx.imageSmoothingEnabled = false;
+    if (ctx) ctx.imageSmoothingEnabled = false;
 
     await loadImages();
     buildMap();
@@ -746,6 +757,17 @@
       gameRunning = true;
       lastTime = performance.now();
       requestAnimationFrame(loop);
+    });
+
+    // Allow Enter or Space to start when overlay is visible
+    document.addEventListener('keydown', (e) => {
+      const overlay = document.getElementById('overlay');
+      const visible = window.getComputedStyle(overlay).display !== 'none';
+      if (!visible) return;
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        document.getElementById('startBtn').click();
+      }
     });
 
     draw();
