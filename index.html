@@ -1,12 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover" />
   <title>Genuine Undead-Man</title>
+
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     html, body {
@@ -54,6 +52,8 @@
       border: 2px solid #333;
       border-radius: 4px;
       box-shadow: 0 0 20px rgba(0, 255, 255, 0.15);
+      touch-action: none;
+      outline: none;
     }
     #overlay {
       position: absolute;
@@ -67,6 +67,7 @@
       text-align: center;
       padding: 20px;
     }
+    #overlay.hidden { display: none; }
     #overlay h1 {
       font-size: clamp(28px, 8vw, 48px);
       color: #ff0;
@@ -101,6 +102,7 @@
       pointer-events: auto;
       transition: transform 0.1s;
     }
+    #startBtn[disabled] { opacity: 0.6; cursor: default; pointer-events: none; transform: none; box-shadow: none; }
     #startBtn:active, #restartBtn:active { transform: translateY(3px); box-shadow: 0 1px 0 #c80; }
     #touch-hint {
       position: absolute;
@@ -115,27 +117,38 @@
     @media (max-width: 600px) {
       #ui { font-size: 14px; padding: 6px 10px; }
     }
+
+    /* Respect reduced motion preferences */
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; animation: none !important; }
+    }
+
+    /* small helper for screen readers */
+    .sr-only { position: absolute !important; height: 1px; width: 1px; overflow: hidden; clip: rect(1px,1px,1px,1px); white-space: nowrap; }
   </style>
 </head>
 <body>
   <div id="game-container">
-    <div id="ui">
+    <div id="ui" aria-hidden="true">
       <div class="score">SCORE: <span id="scoreVal">0</span></div>
-      <div class="status" id="statusMsg"></div>
+      <div class="status" id="statusMsg" aria-live="polite"></div>
       <div class="lives">LIVES: <span id="livesVal">♥♥♥</span></div>
     </div>
-    <canvas id="game"></canvas>
+
+    <canvas id="game" tabindex="0" aria-label="Game canvas"></canvas>
+
     <div id="touch-hint">Desktop: Arrows / WASD &nbsp;|&nbsp; Mobile: Touch to steer</div>
-    <div id="overlay">
-      <h1>GENUINE UNDEAD-MAN</h1>
-      <p>Eat pellets. Grab cherries to power up and chomp the ghosts!</p>
+
+    <div id="overlay" role="dialog" aria-modal="true" aria-labelledby="title" aria-describedby="desc">
+      <h1 id="title">GENUINE UNDEAD-MAN</h1>
+      <p id="desc">Eat pellets. Grab cherries to power up and chomp the ghosts!</p>
       <p class="hint">6 unique undead ghosts · 3 lives · Timed power mode</p>
       <button id="startBtn" type="button">START GAME</button>
     </div>
   </div>
 
   <script>
-  // All character and background sprite image paths
+  // SPRITES: keep these local filenames (place assets in same directory) or use full URLs
   const SPRITES = {
     pacman: 'content-removebg-preview.png',
     ghost1: 'content-removebg-preview (1).png',
@@ -173,7 +186,7 @@
   const COLS = MAP_RAW[0].length;
 
   let canvas, ctx;
-  let tileSize = 28;
+  let tileSize = 28;            // CSS pixels per tile
   let images = {};
   let gameRunning = false;
   let gameOver = false;
@@ -186,6 +199,7 @@
   let level = 1;
   let frame = 0;
   let lastTime = 0;
+  let rafId = null;
 
   const DIRS = {
     up:    { x: 0, y: -1, name: 'up' },
@@ -300,7 +314,7 @@
 
   function moveEntity(ent, speed, dt) {
     let step = speed * dt;
-    
+
     if (ent.nextDir && (ent.nextDir.x !== ent.dir.x || ent.nextDir.y !== ent.dir.y)) {
       const currentTileX = Math.floor(ent.x);
       const currentTileY = Math.floor(ent.y);
@@ -311,7 +325,7 @@
         const centerX = currentTileX + 0.5;
         const centerY = currentTileY + 0.5;
         const distToCenter = Math.hypot(ent.x - centerX, ent.y - centerY);
-        
+
         if (distToCenter <= step + 0.1) {
           ent.x = centerX;
           ent.y = centerY;
@@ -499,9 +513,15 @@
   }
 
   function draw() {
-    if (!ctx) return;
-    const w = canvas.width;
-    const h = canvas.height;
+    if (!ctx || !canvas) return;
+
+    // Clear & apply transform for HiDPI: ctx is already scaled in resize() via setTransform
+    const w = canvas.width / devicePixelRatio;
+    const h = canvas.height / devicePixelRatio;
+    ctx.save();
+    ctx.setTransform(1,0,0,1,0,0);          // reset any previous transform
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.scale(devicePixelRatio, devicePixelRatio); // draw in CSS pixels, scaled to backing store
     ctx.fillStyle = '#000010';
     ctx.fillRect(0, 0, w, h);
 
@@ -527,6 +547,7 @@
       ctx.restore();
     }
 
+    // draw map and pellets (using CSS-coordinates scaled by transform above)
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
         const x = c * tileSize;
@@ -552,6 +573,7 @@
       }
     }
 
+    // ghosts
     for (const g of ghosts) {
       const sx = g.x * tileSize;
       const sy = g.y * tileSize;
@@ -574,18 +596,17 @@
       ctx.restore();
     }
 
+    // pac glow and pac
     const px = pac.x * tileSize;
     const py = pac.y * tileSize;
     const psize = tileSize * 0.95;
 
-    // Draw Pacman soft yellow identification glow
     ctx.save();
     const glowRadius = psize * 1.2;
     const grad = ctx.createRadialGradient(px, py, psize * 0.2, px, py, glowRadius);
     grad.addColorStop(0, 'rgba(255, 255, 100, 0.65)');
     grad.addColorStop(0.5, 'rgba(255, 220, 0, 0.3)');
     grad.addColorStop(1, 'rgba(255, 200, 0, 0)');
-    
     ctx.fillStyle = grad;
     ctx.beginPath();
     ctx.arc(px, py, glowRadius, 0, Math.PI * 2);
@@ -604,6 +625,8 @@
       ctx.drawImage(images.pacman, px - psize / 2, py - psize / 2, psize, psize);
       ctx.restore();
     }
+
+    ctx.restore();
   }
 
   function drawCherry(cx, cy, s) {
@@ -633,18 +656,19 @@
   function showGameOver() {
     const ov = document.getElementById('overlay');
     ov.innerHTML = `
-      <h1>GAME OVER</h1>
-      <p>Final Score: <strong style="color:#ff0">${score}</strong></p>
+      <h1 id="title">GAME OVER</h1>
+      <p id="desc">Final Score: <strong style="color:#ff0">${score}</strong></p>
       <p class="hint">The undead overtook you...</p>
       <button id="restartBtn" type="button">PLAY AGAIN</button>
     `;
-    ov.style.display = 'flex';
-    document.getElementById('restartBtn').addEventListener('click', () => {
-      ov.style.display = 'none';
+    ov.classList.remove('hidden');
+    const restart = document.getElementById('restartBtn');
+    restart.addEventListener('click', () => {
+      ov.classList.add('hidden');
       resetGame();
       gameRunning = true;
       lastTime = performance.now();
-      requestAnimationFrame(loop);
+      if (rafId == null) rafId = requestAnimationFrame(loop);
     });
   }
 
@@ -652,25 +676,26 @@
     if (DIRS[name]) pac.nextDir = DIRS[name];
   }
 
+  // keyboard input
   window.addEventListener('keydown', e => {
     if (!gameRunning) return;
-    const k = e.key.toLowerCase();
+    const k = (e.key || '').toLowerCase();
     if (k === 'arrowup' || k === 'w') { e.preventDefault(); setDir('up'); }
     else if (k === 'arrowdown' || k === 's') { e.preventDefault(); setDir('down'); }
     else if (k === 'arrowleft' || k === 'a') { e.preventDefault(); setDir('left'); }
     else if (k === 'arrowright' || k === 'd') { e.preventDefault(); setDir('right'); }
   });
 
-  function handleTouch(e) {
+  // pointer-based steering (works for mouse, touch, pen)
+  function handlePointer(e) {
     if (!gameRunning || !canvas) return;
+    // Only respond to primary pointer to reduce accidental multi-pointer events
+    if (e.pointerType && e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
-    const touch = e.touches[0] || e.changedTouches[0];
-    if (!touch) return;
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const tx = (touch.clientX - rect.left) * scaleX;
-    const ty = (touch.clientY - rect.top) * scaleY;
+    // convert client to CSS canvas coords (we draw using CSS pixels and scaled transform)
+    const tx = (e.clientX - rect.left);
+    const ty = (e.clientY - rect.top);
     const dx = tx - pac.x * tileSize;
     const dy = ty - pac.y * tileSize;
     if (Math.abs(dx) > Math.abs(dy)) {
@@ -697,38 +722,40 @@
     const computedTile = Math.max(8, Math.floor(cw / COLS));
     tileSize = computedTile;
     if (!canvas) return;
-    canvas.width = tileSize * COLS;
-    canvas.height = tileSize * ROWS;
-    canvas.style.width = canvas.width + 'px';
-    canvas.style.height = canvas.height + 'px';
+    // Backing store size should be scaled by devicePixelRatio
+    const dpr = window.devicePixelRatio || 1;
+    const cssWidth = tileSize * COLS;
+    const cssHeight = tileSize * ROWS;
+    canvas.style.width = cssWidth + 'px';
+    canvas.style.height = cssHeight + 'px';
+    canvas.width = Math.max(1, Math.floor(cssWidth * dpr));
+    canvas.height = Math.max(1, Math.floor(cssHeight * dpr));
+
+    // prepare context
+    ctx = canvas.getContext('2d', { alpha: true });
+    ctx.imageSmoothingEnabled = false;
+    // We'll use scale in draw() before painting
   }
 
   function loop(now) {
-    if (!gameRunning && !gameOver) return;
+    if (!gameRunning && !gameOver) { rafId = null; return; }
     const dt = Math.min((now - lastTime) / 1000, 0.05);
     lastTime = now;
     update(dt);
     draw();
-    if (gameRunning) requestAnimationFrame(loop);
+    rafId = requestAnimationFrame(loop);
   }
 
   function loadImages() {
     return new Promise(resolve => {
       const keys = Object.keys(SPRITES);
       let count = 0;
+      if (keys.length === 0) resolve();
       keys.forEach(key => {
         const img = new Image();
-        // allow cross-origin if images are hosted elsewhere
         img.crossOrigin = 'anonymous';
-        img.onload = () => {
-          count++;
-          if (count === keys.length) resolve();
-        };
-        img.onerror = () => {
-          // continue even if some images fail to load
-          count++;
-          if (count === keys.length) resolve();
-        };
+        img.onload = () => { count++; if (count === keys.length) resolve(); };
+        img.onerror = () => { count++; if (count === keys.length) resolve(); };
         images[key] = img;
         img.src = SPRITES[key];
       });
@@ -748,21 +775,14 @@
     window.addEventListener('resize', resize);
     updateUI();
 
-    canvas.addEventListener('touchstart', handleTouch, { passive: false });
-    canvas.addEventListener('touchmove', handleTouch, { passive: false });
+    // pointer events for steering
+    canvas.addEventListener('pointerdown', handlePointer, { passive: false });
+    canvas.addEventListener('pointermove', handlePointer, { passive: false });
 
-    document.getElementById('startBtn').addEventListener('click', () => {
-      document.getElementById('overlay').style.display = 'none';
-      resetGame();
-      gameRunning = true;
-      lastTime = performance.now();
-      requestAnimationFrame(loop);
-    });
-
-    // Allow Enter or Space to start when overlay is visible
+    // keyboard to start when overlay shown
     document.addEventListener('keydown', (e) => {
       const overlay = document.getElementById('overlay');
-      const visible = window.getComputedStyle(overlay).display !== 'none';
+      const visible = !overlay.classList.contains('hidden');
       if (!visible) return;
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
@@ -770,6 +790,20 @@
       }
     });
 
+    // Start button
+    const startBtn = document.getElementById('startBtn');
+    startBtn.addEventListener('click', () => {
+      startBtn.disabled = true;
+      document.getElementById('overlay').classList.add('hidden');
+      resetGame();
+      gameRunning = true;
+      lastTime = performance.now();
+      if (rafId == null) rafId = requestAnimationFrame(loop);
+      // focus canvas for keyboard input
+      canvas.focus();
+    });
+
+    // initial draw
     draw();
   }
 
